@@ -1,0 +1,30 @@
+{
+  "name": "typsio-client",
+  "version": "0.1.0",
+  "description": "Type-safe client for Typsio.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "socket.io",
+    "rpc",
+    "typescript",
+    "type-safe"
+  ],
+  "author": "Your Name <your.email@example.com>",
+  "license": "MIT",
+  "peerDependencies": {
+    "socket.io-client": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.1",
+    "socket.io-client": "^4.7.2",
+    "typescript": "^5.2.2"
+  },
+  "files": [
+    "dist"
+  ]
+}

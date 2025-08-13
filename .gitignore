@@ -1,0 +1,6 @@
+# Python venv
+venv
+.venv
+
+# Node modules
+node_modules
