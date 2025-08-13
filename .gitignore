@@ -2,5 +2,12 @@
 venv
 .venv
 
+# Python build
+*.pyc
+*.pyo
+*.egg-info
+*.egg
+__pycache__
+
 # Node modules
 node_modules
