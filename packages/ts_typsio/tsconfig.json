@@ -4,18 +4,18 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "target": "ESNext",
-    "isolatedModules": true,
+    "isolatedModules": false,
     "esModuleInterop": true,
-    "noEmit": true,
-    "allowImportingTsExtensions": true,
+    "noEmit": false,
+    "declaration": true,
     "outDir": "dist",
     "lib": [ "esnext" ],
     "types": [ "node" ],
-    "baseUrl": "./",
+    "baseUrl": "./"
   },
-  "exclude": [ "node_modules" ],
+  "exclude": [ "node_modules", "dist" ],
   "include": [
     "src/**/*.ts",
-    "bin/*.ts"
+    "index.ts"
   ]
 }

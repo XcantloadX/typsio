@@ -6,14 +6,14 @@ export interface DefaultRPCMethods { [key: string]: (...args: any[]) => Promise<
 export interface DefaultServerEvents { [key: string]: (...args: any[]) => void; }
 
 export interface TypsioClientOptions {
-  timeout?: number;
-  rpcEventName?: string;
+	timeout?: number;
+	rpcEventName?: string;
 }
 
 interface PendingCall {
-  resolve: (value: any) => void;
-  reject: (reason?: any) => void;
-  timeoutTimer: NodeJS.Timeout;
+	resolve: (value: any) => void;
+	reject: (reason?: any) => void;
+	timeoutTimer: NodeJS.Timeout;
 }
 
 /**
@@ -23,74 +23,74 @@ interface PendingCall {
  * @returns 一个包含 remote (用于 RPC 调用) 和事件监听器 (on, off) 的客户端实例。
  */
 export function createTypsioClient<
-  ServerEvents extends DefaultServerEvents = DefaultServerEvents,
-  ClientRPC extends DefaultRPCMethods = DefaultRPCMethods
+	ServerEvents extends DefaultServerEvents = DefaultServerEvents,
+	ClientRPC = DefaultRPCMethods
 >(socket: Socket, options: TypsioClientOptions = {}) {
-  const {
-    timeout = 10000,
-    rpcEventName = 'rpc_call',
-  } = options;
-  const responseEventName = `${rpcEventName}_response`;
+	const {
+		timeout = 10000,
+		rpcEventName = 'rpc_call',
+	} = options;
+	const responseEventName = `${rpcEventName}_response`;
 
-  let callCounter = 0;
-  const pendingCalls = new Map<string, PendingCall>();
+	let callCounter = 0;
+	const pendingCalls = new Map<string, PendingCall>();
 
-  socket.on(responseEventName, (data: { call_id: string; result?: any; error?: string }) => {
-    const pending = pendingCalls.get(data.call_id);
-    if (!pending) return;
+	socket.on(responseEventName, (data: { call_id: string; result?: any; error?: string }) => {
+		const pending = pendingCalls.get(data.call_id);
+		if (!pending) return;
 
-    clearTimeout(pending.timeoutTimer);
-    if (data.error) {
-      pending.reject(new Error(data.error));
-    } else {
-      pending.resolve(data.result);
-    }
-    pendingCalls.delete(data.call_id);
-  });
-  
-  socket.on('disconnect', () => {
-    pendingCalls.forEach((call, id) => {
-      clearTimeout(call.timeoutTimer);
-      call.reject(new Error('Socket disconnected. RPC call aborted.'));
-      pendingCalls.delete(id);
-    });
-  });
+		clearTimeout(pending.timeoutTimer);
+		if (data.error) {
+			pending.reject(new Error(data.error));
+		} else {
+			pending.resolve(data.result);
+		}
+		pendingCalls.delete(data.call_id);
+	});
+	
+	socket.on('disconnect', () => {
+		pendingCalls.forEach((call, id) => {
+			clearTimeout(call.timeoutTimer);
+			call.reject(new Error('Socket disconnected. RPC call aborted.'));
+			pendingCalls.delete(id);
+		});
+	});
 
-  const remote = new Proxy({}, {
-    get: (target, prop) => {
-      if (typeof prop !== 'string') return undefined;
-      return (...args: any[]) => {
-        return new Promise((resolve, reject) => {
-          if (!socket.connected) {
-            return reject(new Error("Socket is not connected."));
-          }
-          const callId = `${socket.id}-${callCounter++}`;
+	const remote = new Proxy({}, {
+		get: (target, prop) => {
+			if (typeof prop !== 'string') return undefined;
+			return (...args: any[]) => {
+				return new Promise((resolve, reject) => {
+					if (!socket.connected) {
+						return reject(new Error("Socket is not connected."));
+					}
+					const callId = `${socket.id}-${callCounter++}`;
 
-          const timeoutTimer = setTimeout(() => {
-            pendingCalls.delete(callId);
-            reject(new Error(`RPC call '${prop}' timed out after ${timeout}ms`));
-          }, timeout);
+					const timeoutTimer = setTimeout(() => {
+						pendingCalls.delete(callId);
+						reject(new Error(`RPC call '${prop}' timed out after ${timeout}ms`));
+					}, timeout);
 
-          pendingCalls.set(callId, { resolve, reject, timeoutTimer });
+					pendingCalls.set(callId, { resolve, reject, timeoutTimer });
 
-          socket.emit(rpcEventName as any, {
-            call_id: callId,
-            function_name: prop,
-            args,
-          });
-        });
-      };
-    },
-  }) as ClientRPC;
+					socket.emit(rpcEventName as any, {
+						call_id: callId,
+						function_name: prop,
+						args,
+					});
+				});
+			};
+		},
+	}) as ClientRPC;
 
-  return {
-    remote,
-    on<E extends keyof ServerEvents>(event: E, listener: ServerEvents[E]): void {
-      socket.on(event as string, listener);
-    },
-    off<E extends keyof ServerEvents>(event: E, listener?: ServerEvents[E]): void {
-      socket.off(event as string, listener);
-    },
-    socket,
-  };
+	return {
+		remote,
+		on<E extends keyof ServerEvents>(event: E, listener: ServerEvents[E]): void {
+			socket.on(event as string, listener as unknown as (...args: any[]) => void);
+		},
+		off<E extends keyof ServerEvents>(event: E, listener?: ServerEvents[E]): void {
+			socket.off(event as string, listener as unknown as (...args: any[]) => void);
+		},
+		socket,
+	};
 }
