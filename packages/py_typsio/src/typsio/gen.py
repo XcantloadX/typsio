@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from inspect import signature
 from pydantic import BaseModel
-from typing import Callable, Dict, Any, Type, Set, Union
+from typing import Callable, Dict, Any, Type, Set, Union, Optional
 
 # --- 类型映射与生成逻辑 ---
 TYPE_MAP = {
@@ -78,7 +78,7 @@ def get_ts_type(py_type: Any) -> str:
     
     if strict_mode:
         print(f"❌ Error: {warning_msg}", file=sys.stderr)
-        sys.exit(1)
+        raise TypeError(warning_msg)
     else:
         print(warning_msg, file=sys.stderr)
         warnings_occurred = True
@@ -189,64 +189,67 @@ def remove_unwanted_titles(schema: Any) -> Any:
     return new_schema
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Generate TypeScript types from a Typsio Python API definition file.")
-    parser.add_argument("source_file", help="Path to the Python source file containing API definitions.")
-    parser.add_argument("registry_name", help="Name of the RPCRegistry instance in the source file.")
-    parser.add_argument("--output", "-o", required=True, help="Output path for the generated TypeScript file.")
-    parser.add_argument("--s2c-events-name", help="Name of the Server-to-Client events dictionary (optional).")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output.")
-    parser.add_argument("--strict", "-s", action="store_true", help="Treat warnings as errors.")
-    args = parser.parse_args()
+def generate_types(
+    source_file: Union[str, Path],
+    registry_name: str,
+    output: Union[str, Path],
+    s2c_events_name: Optional[str] = None,
+    *,
+    verbose: bool = False,
+    strict: bool = False,
+) -> None:
+    """
+    Programmatic API to generate TypeScript types.
 
-    # 设置全局变量
-    global strict_mode
-    strict_mode = args.strict
+    Raises exceptions on errors; prints progress when verbose is True.
+    """
+    global strict_mode, warnings_occurred
 
-    source_path = Path(args.source_file).resolve()
-    output_path = Path(args.output).resolve()
+    strict_mode = strict
+    warnings_occurred = False
+
+    source_path = Path(source_file).resolve()
+    output_path = Path(output).resolve()
     output_path.parent.mkdir(exist_ok=True)
 
-    if args.verbose:
+    if verbose:
         print(f"🔄 Processing source file: {source_path}")
-        print(f"📦 Using registry: {args.registry_name}")
-        if args.s2c_events_name:
-            print(f"🔔 Using S2C events: {args.s2c_events_name}")
-        if args.strict:
+        print(f"📦 Using registry: {registry_name}")
+        if s2c_events_name:
+            print(f"🔔 Using S2C events: {s2c_events_name}")
+        if strict:
             print("🔒 Strict mode enabled")
 
     spec = importlib.util.spec_from_file_location(source_path.stem, source_path)
     if not spec or not spec.loader:
-        print(f"Error: Could not import source file '{source_path}'", file=sys.stderr)
-        sys.exit(1)
+        raise ImportError(f"Could not import source file '{source_path}'")
     module = importlib.util.module_from_spec(spec)
     sys.path.insert(0, str(source_path.parent))
-    spec.loader.exec_module(module)
-    sys.path.pop(0)
+    try:
+        spec.loader.exec_module(module)  # type: ignore[attr-defined]
+    finally:
+        sys.path.pop(0)
 
-    registry = getattr(module, args.registry_name)
-    s2c_events = getattr(module, args.s2c_events_name, {}) if args.s2c_events_name else {}
+    registry = getattr(module, registry_name)
+    s2c_events = getattr(module, s2c_events_name, {}) if s2c_events_name else {}
     
     all_models = registry.models.copy()
     for model in s2c_events.values():
         if isinstance(model, type) and issubclass(model, BaseModel):
             all_models.add(model)
 
-    if args.verbose:
+    if verbose:
         print(f"📝 Found {len(all_models)} models to process")
 
     schemas = {m.__name__: m.model_json_schema() for m in all_models}
-    # Use the new flattening function
     combined_schema = flatten_schema_definitions(schemas)
-
-    # Remove all 'title' fields from the schema to prevent alias generation
     combined_schema = remove_unwanted_titles(combined_schema)
     
     with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix=".json") as tmp_file:
         json.dump(combined_schema, tmp_file, indent=2)
         tmp_schema_path = tmp_file.name
     
-    if args.verbose:
+    if verbose:
         print(f"💾 Temporary schema file created: {tmp_schema_path}")
         print("📄 Schema content:")
         print(json.dumps(combined_schema, indent=2))
@@ -268,22 +271,20 @@ def main():
             "--style.singleQuote",
             "--no-additionalProperties",
         ]
-        if args.verbose:
+        if verbose:
             print(f"🚀 Running command: {' '.join(cmd)}")
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        if args.verbose and result.stdout:
+        if verbose and result.stdout:
             print(f" STDOUT: {result.stdout}")
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(
-            f"❌ Error during TypeScript generation. Is 'json-schema-to-typescript' installed globally (`npm i -g json-schema-to-typescript`)?",
-            file=sys.stderr,
-        )
-        if isinstance(e, subprocess.CalledProcessError):
-            print(e.stderr, file=sys.stderr)
-        sys.exit(1)
+        if isinstance(e, FileNotFoundError):
+            raise RuntimeError(
+                "json-schema-to-typescript not found. Install it: `npm i -g json-schema-to-typescript`"
+            ) from e
+        raise
     finally:
         Path(tmp_schema_path).unlink(missing_ok=True)
-        if args.verbose:
+        if verbose:
             print(f"🧹 Cleaned up temporary files")
 
     with open(output_path, "a") as f:
@@ -291,20 +292,42 @@ def main():
         if s2c_events:
             f.write("\n\n" + generate_ts_interface("ServerToClientEvents", s2c_events, format_event))
     
-    if args.verbose:
+    if verbose:
         print(f"📄 Appended RPC methods and events interfaces")
     
-    # 检查是否有警告发生
-    global warnings_occurred
     if warnings_occurred:
-        if args.strict:
-            print("❌ Generation failed due to warnings (strict mode enabled)", file=sys.stderr)
-            sys.exit(1)
+        if strict:
+            raise RuntimeError("Generation failed due to warnings (strict mode enabled)")
         else:
             print("⚠️  Generation completed with warnings", file=sys.stderr)
     else:
-        print(f"✅ TypeScript types successfully generated at: {output_path}")
+        if verbose or True:
+            print(f"✅ TypeScript types successfully generated at: {output_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate TypeScript types from a Typsio Python API definition file.")
+    parser.add_argument("source_file", help="Path to the Python source file containing API definitions.")
+    parser.add_argument("registry_name", help="Name of the RPCRegistry instance in the source file.")
+    parser.add_argument("--output", "-o", required=True, help="Output path for the generated TypeScript file.")
+    parser.add_argument("--s2c-events-name", help="Name of the Server-to-Client events dictionary (optional).")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output.")
+    parser.add_argument("--strict", "-s", action="store_true", help="Treat warnings as errors.")
+    args = parser.parse_args()
+
+    try:
+        generate_types(
+            source_file=args.source_file,
+            registry_name=args.registry_name,
+            output=args.output,
+            s2c_events_name=args.s2c_events_name,
+            verbose=args.verbose,
+            strict=args.strict,
+        )
+    except Exception as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    main() 

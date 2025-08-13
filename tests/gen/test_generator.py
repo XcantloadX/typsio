@@ -9,43 +9,23 @@ class TestTypsioGenerator(unittest.TestCase):
 	maxDiff = None
 
 	def _run_generator(self, input_file, output_file):
-		generator_path = Path(__file__).parent.parent.parent / "generator/typsio_gen.py"
 		input_path = Path(__file__).parent / "inputs" / input_file
 		output_path = Path(__file__).parent / "generated" / output_file
 
 		output_path.parent.mkdir(exist_ok=True)
 
 		project_root = Path(__file__).parent.parent.parent
+		py_typsio_src = project_root / "packages" / "py_typsio" / "src"
 
-		# Create a modified environment for the subprocess
-		env = os.environ.copy()
-		python_path = env.get("PYTHONPATH", "")
-		# Prepend the project root to PYTHONPATH
-		env["PYTHONPATH"] = f"{project_root}{os.pathsep}{python_path}"
-		args = [
-			sys.executable,
-			str(generator_path),
-			str(input_path),
-			"registry",
-			"--output",
-			str(output_path),
-		]
-		print('Run command:', ' '.join(args))
-		try:
-			result = subprocess.run(
-				args,
-				check=True,
-				capture_output=True,
-				text=True,
-				env=env,  # Pass the modified environment
-			)
-		except subprocess.CalledProcessError as e:
-			print("--- STDOUT ---")
-			print(e.stdout)
-			print("--- STDERR ---")
-			print(e.stderr)
-			raise e
-
+		# Ensure import path for typsio
+		sys.path.insert(0, str(py_typsio_src))
+		import typsio
+		# Call API directly
+		typsio.generate_types(
+			source_file=str(input_path),
+			registry_name="registry",
+			output=str(output_path),
+		)
 		return output_path
 
 	def _ts_typecheck(self, validation_file: str):
