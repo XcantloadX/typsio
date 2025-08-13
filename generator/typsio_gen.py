@@ -167,6 +167,28 @@ def process_schema_refs_and_remove_nested_defs(schema: Any) -> Any:
     else:
         return schema
 
+
+def remove_unwanted_titles(schema: Any) -> Any:
+    """
+    Recursively removes 'title' keys from a schema, except for titles
+    on objects that directly contain a 'properties' key (i.e., model definitions).
+    This prevents json-schema-to-typescript from creating aliases for simple types.
+    """
+    if not isinstance(schema, dict):
+        return schema
+
+    # Recurse first on all values
+    new_schema = {k: remove_unwanted_titles(v) for k, v in schema.items()}
+
+    # Now, check if the current object's title should be kept
+    if 'title' in new_schema:
+        # Keep title only if 'properties' is also a key at this level
+        if 'properties' not in new_schema:
+            del new_schema['title']
+            
+    return new_schema
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate TypeScript types from a Typsio Python API definition file.")
     parser.add_argument("source_file", help="Path to the Python source file containing API definitions.")
@@ -216,6 +238,9 @@ def main():
     schemas = {m.__name__: m.model_json_schema() for m in all_models}
     # Use the new flattening function
     combined_schema = flatten_schema_definitions(schemas)
+
+    # Remove all 'title' fields from the schema to prevent alias generation
+    combined_schema = remove_unwanted_titles(combined_schema)
     
     with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix=".json") as tmp_file:
         json.dump(combined_schema, tmp_file, indent=2)
