@@ -9,6 +9,7 @@ from pathlib import Path
 from inspect import signature
 from pydantic import BaseModel
 from typing import Callable, Dict, Any, Type, Set, Union, Optional
+from dataclasses import dataclass
 
 # --- 类型映射与生成逻辑 ---
 TYPE_MAP = {
@@ -23,6 +24,83 @@ TYPE_MAP = {
 # 全局变量跟踪警告
 warnings_occurred = False
 strict_mode = False
+
+
+@dataclass
+class TypsioGenConfig:
+    """
+    参数配置类，用于通过 -c/--config 传入配置文件时提供参数。
+
+    在配置文件中需要实例化此类，例如：
+
+    from typsio.gen import TypsioGenConfig
+    config = TypsioGenConfig(
+        source_file="./api.py",
+        registry_name="rpc_registry",
+        output="./types.gen.ts",
+        s2c_events_name="S2C_EVENTS",
+        verbose=True,
+        strict=False,
+    )
+    """
+    source_file: Union[str, Path]
+    registry_name: str
+    output: Union[str, Path]
+    s2c_events_name: Optional[str] = None
+    verbose: bool = False
+    strict: bool = False
+
+
+def _load_config_from_py(config_path: Union[str, Path]) -> TypsioGenConfig:
+    """
+    导入配置文件，并返回其中的 TypsioGenConfig 实例。
+
+    支持在配置中使用导入语句；执行前会将配置文件所在目录临时加入 sys.path。
+
+    示例：
+    ```python
+    from typsio.gen import TypsioGenConfig # 可不写，只是为了让 TypingChecker 通过
+    export = TypsioGenConfig(
+        source_file="my_app/api_defs.py",
+        registry_name="registry",
+        output="../frontend/src/generated/api-types.ts",
+    )
+    ```
+    """
+    cfg_path = Path(config_path).resolve()
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"Config file not found: {cfg_path}")
+
+    source_code = cfg_path.read_text(encoding="utf-8")
+
+    # 隔离执行环境，仅暴露必要对象
+    exec_globals: Dict[str, Any] = {
+        "__builtins__": __builtins__,
+        "TypsioGenConfig": TypsioGenConfig,
+        "Path": Path,
+    }
+    exec_locals: Dict[str, Any] = {}
+
+    # 将配置文件目录加入 sys.path 以支持其内部导入
+    sys.path.insert(0, str(cfg_path.parent))
+    try:
+        compiled = compile(source_code, str(cfg_path), "exec")
+        exec(compiled, exec_globals, exec_locals)
+    except Exception as e:
+        raise RuntimeError(f"Failed to evaluate config file '{cfg_path}': {e}") from e
+    finally:
+        sys.path.pop(0)
+
+    # 在执行命名空间中查找 TypsioGenConfig 的实例
+    for ns in (exec_locals, exec_globals):
+        for _name, value in ns.items():
+            if isinstance(value, TypsioGenConfig):
+                return value
+
+    raise ValueError(
+        f"No TypsioGenConfig instance found in '{cfg_path}'. "
+        "Please instantiate TypsioGenConfig, e.g. `config = TypsioGenConfig(...)`."
+    )
 
 
 def get_ts_type(py_type: Any) -> str:
@@ -307,22 +385,65 @@ def generate_types(
 
 def main():
     parser = argparse.ArgumentParser(description="Generate TypeScript types from a Typsio Python API definition file.")
-    parser.add_argument("source_file", help="Path to the Python source file containing API definitions.")
-    parser.add_argument("registry_name", help="Name of the RPCRegistry instance in the source file.")
-    parser.add_argument("--output", "-o", required=True, help="Output path for the generated TypeScript file.")
+    # 允许省略位置参数以支持纯配置文件方式调用
+    parser.add_argument("source_file", nargs="?", help="Path to the Python source file containing API definitions.")
+    parser.add_argument("registry_name", nargs="?", help="Name of the RPCRegistry instance in the source file.")
+    parser.add_argument("--output", "-o", required=False, help="Output path for the generated TypeScript file.")
     parser.add_argument("--s2c-events-name", help="Name of the Server-to-Client events dictionary (optional).")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output.")
     parser.add_argument("--strict", "-s", action="store_true", help="Treat warnings as errors.")
+    parser.add_argument("--config", "-c", help="Path to a .py config file that instantiates TypsioGenConfig.")
     args = parser.parse_args()
 
     try:
+        config_obj: Optional[TypsioGenConfig] = None
+
+        if args.config:
+            # 显式指定配置文件
+            config_obj = _load_config_from_py(args.config)
+        else:
+            # 检测是否完全未指定任何参数（包含位置参数与选项）
+            no_args_provided = (
+                args.source_file is None and
+                args.registry_name is None and
+                args.output is None and
+                args.s2c_events_name is None and
+                args.verbose is False and
+                args.strict is False
+            )
+            if no_args_provided:
+                default_cfg = Path("./typsio.config.py").resolve()
+                if default_cfg.exists():
+                    config_obj = _load_config_from_py(default_cfg)
+                else:
+                    raise ValueError(
+                        "No arguments were provided and './typsio.config.py' was not found. "
+                        "Provide CLI args or a config file via --config/-c."
+                    )
+
+        if config_obj is None:
+            # 使用 CLI 传参路径（必须完整提供三要素）
+            if not (args.source_file and args.registry_name and args.output):
+                raise ValueError(
+                    "Incomplete CLI arguments. Provide 'source_file', 'registry_name' and '--output', "
+                    "or use '--config/-c', or provide no args to use './typsio.config.py'."
+                )
+            config_obj = TypsioGenConfig(
+                source_file=args.source_file,
+                registry_name=args.registry_name,
+                output=args.output,
+                s2c_events_name=args.s2c_events_name,
+                verbose=bool(args.verbose),
+                strict=bool(args.strict),
+            )
+
         generate_types(
-            source_file=args.source_file,
-            registry_name=args.registry_name,
-            output=args.output,
-            s2c_events_name=args.s2c_events_name,
-            verbose=args.verbose,
-            strict=args.strict,
+            source_file=config_obj.source_file,
+            registry_name=config_obj.registry_name,
+            output=config_obj.output,
+            s2c_events_name=config_obj.s2c_events_name,
+            verbose=config_obj.verbose,
+            strict=config_obj.strict,
         )
     except Exception as e:
         print(f"❌ {e}", file=sys.stderr)
