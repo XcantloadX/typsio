@@ -1,0 +1,1 @@
+export function assertType<TExpected, TReturn>(_value: TExpected, _returnValue: TReturn): void {} 
