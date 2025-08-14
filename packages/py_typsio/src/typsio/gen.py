@@ -154,7 +154,7 @@ def get_ts_type(py_type: Any) -> str:
         elif origin is list:
             return f"{get_ts_type(args[0])}[]"
         elif origin is dict:
-            return f"{{ [key: {get_ts_type(args[0])}]: {get_ts_type(args[1])} }}"
+            return f"Record<{get_ts_type(args[0])}, {get_ts_type(args[1])}>"
         elif origin is set:
             return f"Set<{get_ts_type(args[0])}>"
         # 处理 Union 类型 (包括 Optional)
