@@ -5,10 +5,11 @@ import argparse
 import importlib.util
 import sys
 import tempfile
+import glob
 from pathlib import Path
 from inspect import signature
 from pydantic import BaseModel
-from typing import Callable, Dict, Any, Type, Set, Union, Optional
+from typing import Callable, Dict, Any, Type, Set, Union, Optional, List
 from dataclasses import dataclass
 
 # --- 类型映射与生成逻辑 ---
@@ -26,6 +27,8 @@ warnings_occurred = False
 strict_mode = False
 
 
+# TODO: docstring 改用英文
+
 @dataclass
 class TypsioGenConfig:
     """
@@ -35,20 +38,48 @@ class TypsioGenConfig:
 
     from typsio.gen import TypsioGenConfig
     config = TypsioGenConfig(
-        source_file="./api.py",
+        source_files=["./api.py", "./more_api.py"],
         registry_name="rpc_registry",
         output="./types.gen.ts",
         s2c_events_name="S2C_EVENTS",
         verbose=True,
         strict=False,
     )
+    或者兼容单文件：
+    config = TypsioGenConfig(
+        source_file="./api.py",
+        registry_name="rpc_registry",
+        output="./types.gen.ts",
+    )
     """
-    source_file: Union[str, Path]
-    registry_name: str
-    output: Union[str, Path]
+    source_file: Optional[Union[str, Path]] = None
+    """
+    输入 Python 文件路径（单文件，兼容旧版本）。
+    """
+    source_files: Optional[List[Union[str, Path]]] = None
+    """
+    输入多个 Python 文件路径。与 source_file 互斥，优先使用此字段。
+    """
+    registry_name: str = ""
+    """
+    输入文件中注册表变量（RPCRegistry 实例）的名称。
+    """
+    output: Union[str, Path] = ""
+    """
+    输出 TypeScript 定义文件路径。
+    """
     s2c_events_name: Optional[str] = None
+    """
+    输入文件中 S2C 事件字典变量（ServerToClientEvents 实例）的名称。
+    """
     verbose: bool = False
+    """
+    是否打印详细信息。
+    """
     strict: bool = False
+    """
+    是否启用严格模式。
+    """
 
 
 def _load_config_from_py(config_path: Union[str, Path]) -> TypsioGenConfig:
@@ -61,7 +92,7 @@ def _load_config_from_py(config_path: Union[str, Path]) -> TypsioGenConfig:
     ```python
     from typsio.gen import TypsioGenConfig # 可不写，只是为了让 TypingChecker 通过
     export = TypsioGenConfig(
-        source_file="my_app/api_defs.py",
+        source_files=["my_app/api_defs.py", "my_app/more_api.py"],
         registry_name="registry",
         output="../frontend/src/generated/api-types.ts",
     )
@@ -201,7 +232,7 @@ def flatten_schema_definitions(schemas: Dict[str, Any]) -> Dict[str, Any]:
         # Add the processed schema to our definitions
         if model_name not in flattened_defs:
             flattened_defs[model_name] = processed_schema
-            
+        
         # Extract any nested definitions and add them to our top-level definitions (also processed)
         if '$defs' in schema:
             for def_name, def_schema in schema['$defs'].items():
@@ -268,7 +299,7 @@ def remove_unwanted_titles(schema: Any) -> Any:
 
 
 def generate_types(
-    source_file: Union[str, Path],
+    source_file: Union[str, Path, List[Union[str, Path]]],
     registry_name: str,
     output: Union[str, Path],
     s2c_events_name: Optional[str] = None,
@@ -279,6 +310,9 @@ def generate_types(
     """
     Programmatic API to generate TypeScript types.
 
+    Supports multiple Python source files. Aggregates all models, RPC methods,
+    and S2C events, then emits a single merged TypeScript file.
+
     Raises exceptions on errors; prints progress when verbose is True.
     """
     global strict_mode, warnings_occurred
@@ -286,38 +320,88 @@ def generate_types(
     strict_mode = strict
     warnings_occurred = False
 
-    source_path = Path(source_file).resolve()
+    # 解析输入文件路径，支持 glob
+    if not isinstance(source_file, list):
+        source_patterns = [source_file]
+    else:
+        source_patterns = source_file
+
+    source_paths: List[Path] = []
+    for pattern in source_patterns:
+        # NOTE: Path patterns are relative to the current working directory.
+        # `glob` will expand them. `recursive=True` allows for `**`.
+        matched_files = glob.glob(str(pattern), recursive=True)
+        for f_str in matched_files:
+            f_path = Path(f_str)
+            if f_path.is_file():
+                source_paths.append(f_path.resolve())
+
+    # Remove duplicates and sort for consistent order
+    if source_paths:
+        source_paths = sorted(list(set(source_paths)))
+
+    if not source_paths:
+        patterns_str = ', '.join(map(str, source_patterns))
+        raise FileNotFoundError(f"No source files found for given patterns: {patterns_str}")
+
     output_path = Path(output).resolve()
     output_path.parent.mkdir(exist_ok=True)
 
     if verbose:
-        print(f"🔄 Processing source file: {source_path}")
+        if len(source_paths) == 1:
+            print(f"🔄 Processing source file: {source_paths[0]}")
+        else:
+            print(f"🔄 Processing {len(source_paths)} source files:")
+            for p in source_paths:
+                print(f"   • {p}")
         print(f"📦 Using registry: {registry_name}")
         if s2c_events_name:
             print(f"🔔 Using S2C events: {s2c_events_name}")
         if strict:
             print("🔒 Strict mode enabled")
 
-    spec = importlib.util.spec_from_file_location(source_path.stem, source_path)
-    if not spec or not spec.loader:
-        raise ImportError(f"Could not import source file '{source_path}'")
-    module = importlib.util.module_from_spec(spec)
-    sys.path.insert(0, str(source_path.parent))
-    try:
-        spec.loader.exec_module(module)  # type: ignore[attr-defined]
-    finally:
-        sys.path.pop(0)
+    # 聚合容器
+    all_models: Set[Type[BaseModel]] = set()
+    all_functions: Dict[str, Callable[..., Any]] = {}
+    all_s2c_events: Dict[str, Type[BaseModel]] = {}
 
-    registry = getattr(module, registry_name)
-    s2c_events = getattr(module, s2c_events_name, {}) if s2c_events_name else {}
-    
-    all_models = registry.models.copy()
-    for model in s2c_events.values():
-        if isinstance(model, type) and issubclass(model, BaseModel):
-            all_models.add(model)
+    # 导入各个模块，收集 registry 与事件
+    for source_path in source_paths:
+        spec = importlib.util.spec_from_file_location(source_path.stem, source_path)
+        if not spec or not spec.loader:
+            raise ImportError(f"Could not import source file '{source_path}'")
+        module = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(source_path.parent))
+        try:
+            spec.loader.exec_module(module)  # type: ignore[attr-defined]
+        finally:
+            sys.path.pop(0)
+
+        registry = getattr(module, registry_name)
+        s2c_events = getattr(module, s2c_events_name, {}) if s2c_events_name else {}
+
+        # 模型
+        for model in registry.models:
+            if isinstance(model, type) and issubclass(model, BaseModel):
+                all_models.add(model)
+
+        # RPC 方法（名称冲突后者覆盖并给出警告）
+        for func_name, func in getattr(registry, 'functions', {}).items():
+            if func_name in all_functions and verbose:
+                print(f"⚠️  Duplicate RPC method '{func_name}' found. Overriding previous definition.", file=sys.stderr)
+            all_functions[func_name] = func
+
+        # 事件（名称冲突后者覆盖并给出警告）
+        for evt_name, evt_model in getattr(s2c_events, 'items', lambda: [])():
+            if evt_name in all_s2c_events and verbose:
+                print(f"⚠️  Duplicate S2C event '{evt_name}' found. Overriding previous definition.", file=sys.stderr)
+            if isinstance(evt_model, type) and issubclass(evt_model, BaseModel):
+                all_models.add(evt_model)
+                all_s2c_events[evt_name] = evt_model
 
     if verbose:
         print(f"📝 Found {len(all_models)} models to process")
+        print(f"🧩 Aggregated {len(all_functions)} RPC methods and {len(all_s2c_events)} S2C events")
 
     schemas = {m.__name__: m.model_json_schema() for m in all_models}
     combined_schema = flatten_schema_definitions(schemas)
@@ -366,9 +450,9 @@ def generate_types(
             print(f"🧹 Cleaned up temporary files")
 
     with open(output_path, "a") as f:
-        f.write("\n\n" + generate_ts_interface("RPCMethods", registry.functions, format_rpc_method))
-        if s2c_events:
-            f.write("\n\n" + generate_ts_interface("ServerToClientEvents", s2c_events, format_event))
+        f.write("\n\n" + generate_ts_interface("RPCMethods", all_functions, format_rpc_method))
+        if all_s2c_events:
+            f.write("\n\n" + generate_ts_interface("ServerToClientEvents", all_s2c_events, format_event))
     
     if verbose:
         print(f"📄 Appended RPC methods and events interfaces")
@@ -386,10 +470,10 @@ def generate_types(
 def main():
     parser = argparse.ArgumentParser(description="Generate TypeScript types from a Typsio Python API definition file.")
     # 允许省略位置参数以支持纯配置文件方式调用
-    parser.add_argument("source_file", nargs="?", help="Path to the Python source file containing API definitions.")
-    parser.add_argument("registry_name", nargs="?", help="Name of the RPCRegistry instance in the source file.")
+    parser.add_argument("registry_name", nargs="?", help="Name of the RPCRegistry instance in the source files.")
+    parser.add_argument("--input", "-i", nargs="+", help="Path(s) to Python source file(s) containing API definitions.")
     parser.add_argument("--output", "-o", required=False, help="Output path for the generated TypeScript file.")
-    parser.add_argument("--s2c-events-name", help="Name of the Server-to-Client events dictionary (optional).")
+    parser.add_argument("--s2c-events-name", help="Name of the Server-to-Client events dictionary (optional, same name in each file).")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output.")
     parser.add_argument("--strict", "-s", action="store_true", help="Treat warnings as errors.")
     parser.add_argument("--config", "-c", help="Path to a .py config file that instantiates TypsioGenConfig.")
@@ -404,7 +488,7 @@ def main():
         else:
             # 检测是否完全未指定任何参数（包含位置参数与选项）
             no_args_provided = (
-                args.source_file is None and
+                (not args.input) and
                 args.registry_name is None and
                 args.output is None and
                 args.s2c_events_name is None and
@@ -423,13 +507,14 @@ def main():
 
         if config_obj is None:
             # 使用 CLI 传参路径（必须完整提供三要素）
-            if not (args.source_file and args.registry_name and args.output):
+            if not (args.input and args.registry_name and args.output):
                 raise ValueError(
-                    "Incomplete CLI arguments. Provide 'source_file', 'registry_name' and '--output', "
+                    "Incomplete CLI arguments. Provide '-i/--input', 'registry_name' and '--output', "
                     "or use '--config/-c', or provide no args to use './typsio.config.py'."
                 )
+            # 构建配置对象
             config_obj = TypsioGenConfig(
-                source_file=args.source_file,
+                source_files=args.input,
                 registry_name=args.registry_name,
                 output=args.output,
                 s2c_events_name=args.s2c_events_name,
@@ -437,8 +522,17 @@ def main():
                 strict=bool(args.strict),
             )
 
+        # 选择 source_files 优先，否则回退到单文件
+        cfg_sources: Union[str, Path, List[Union[str, Path]]]
+        if config_obj.source_files and len(config_obj.source_files) > 0:
+            cfg_sources = config_obj.source_files
+        elif config_obj.source_file:
+            cfg_sources = config_obj.source_file
+        else:
+            raise ValueError("TypsioGenConfig must include 'source_files' or 'source_file'.")
+
         generate_types(
-            source_file=config_obj.source_file,
+            source_file=cfg_sources,
             registry_name=config_obj.registry_name,
             output=config_obj.output,
             s2c_events_name=config_obj.s2c_events_name,
