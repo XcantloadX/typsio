@@ -1,5 +1,4 @@
 import { api, on, socketInstance } from './api';
-import './style.css'
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <div>

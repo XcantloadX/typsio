@@ -1,0 +1,7 @@
+[project]
+name = "typsio-example-backend"
+version = "0.1.0"
+dependencies = [
+    "uvicorn",
+    "typsio @ {root:uri}/../../packages/py_typsio" # 本地路径依赖
+]

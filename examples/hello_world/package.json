@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "gen-types": "uv run gen-types"
+    "gen": "typsio-gen",
+    "server": "uvicorn my_app.server:app --reload"
   },
   "dependencies": {
     "socket.io-client": "^4.7.4",
