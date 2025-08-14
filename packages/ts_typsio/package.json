@@ -1,7 +1,7 @@
 {
   "name": "typsio-client",
   "version": "0.1.0",
-  "description": "Type-safe client for Typsio.",
+  "description": "TypeScript client for Typsio, a RPC library based on socket.io.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
@@ -14,7 +14,7 @@
     "typescript",
     "type-safe"
   ],
-  "author": "Your Name <your.email@example.com>",
+  "author": "XcantloadX <3188996979@qq.com>",
   "license": "MIT",
   "peerDependencies": {
     "socket.io-client": "^4.0.0"

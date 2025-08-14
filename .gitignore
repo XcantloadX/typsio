@@ -9,5 +9,8 @@ venv
 *.egg
 __pycache__
 
+# Python repository credentials
+.pypirc
+
 # Node modules
 node_modules
