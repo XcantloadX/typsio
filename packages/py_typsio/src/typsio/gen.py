@@ -6,6 +6,7 @@ import importlib.util
 import sys
 import tempfile
 import glob
+import traceback
 from pathlib import Path
 from inspect import signature
 from pydantic import BaseModel
@@ -365,39 +366,60 @@ def generate_types(
     all_functions: Dict[str, Callable[..., Any]] = {}
     all_s2c_events: Dict[str, Type[BaseModel]] = {}
 
-    # 导入各个模块，收集 registry 与事件
-    for source_path in source_paths:
-        spec = importlib.util.spec_from_file_location(source_path.stem, source_path)
-        if not spec or not spec.loader:
-            raise ImportError(f"Could not import source file '{source_path}'")
-        module = importlib.util.module_from_spec(spec)
-        sys.path.insert(0, str(source_path.parent))
-        try:
+    # 将当前工作目录（假定为项目根目录）加入 sys.path，以支持相对导入
+    # 使用 append 而非 insert(0,...) 来避免与 site-packages 中的库冲突
+    project_root = str(Path.cwd())
+    sys.path.append(project_root)
+
+    try:
+        # 导入各个模块，收集 registry 与事件
+        for source_path in source_paths:
+            # 为了让相对导入生效，需要根据文件路径推断出完整的模块名
+            try:
+                # e.g., /path/to/project/src/api/user.py -> src.api.user
+                module_name = ".".join(source_path.relative_to(project_root).with_suffix("").parts)
+            except ValueError:
+                # 如果文件不在项目根目录下，回退到使用文件名
+                module_name = source_path.stem
+
+            spec = importlib.util.spec_from_file_location(module_name, source_path)
+            if not spec or not spec.loader:
+                raise ImportError(f"Could not import source file '{source_path}'")
+            
+            module = importlib.util.module_from_spec(spec)
+            
+            # 必须将模块添加到 sys.modules 中，否则相对导入会失败
+            sys.modules[module_name] = module
+            
             spec.loader.exec_module(module)  # type: ignore[attr-defined]
-        finally:
-            sys.path.pop(0)
 
-        registry = getattr(module, registry_name)
-        s2c_events = getattr(module, s2c_events_name, {}) if s2c_events_name else {}
+            registry = getattr(module, registry_name)
+            s2c_events = getattr(module, s2c_events_name, {}) if s2c_events_name else {}
 
-        # 模型
-        for model in registry.models:
-            if isinstance(model, type) and issubclass(model, BaseModel):
-                all_models.add(model)
+            # 模型
+            for model in registry.models:
+                if isinstance(model, type) and issubclass(model, BaseModel):
+                    all_models.add(model)
 
-        # RPC 方法（名称冲突后者覆盖并给出警告）
-        for func_name, func in getattr(registry, 'functions', {}).items():
-            if func_name in all_functions and verbose:
-                print(f"⚠️  Duplicate RPC method '{func_name}' found. Overriding previous definition.", file=sys.stderr)
-            all_functions[func_name] = func
+            # RPC 方法（名称冲突后者覆盖并给出警告）
+            for func_name, func in getattr(registry, 'functions', {}).items():
+                if func_name in all_functions and verbose:
+                    print(f"⚠️  Duplicate RPC method '{func_name}' found. Overriding previous definition.", file=sys.stderr)
+                all_functions[func_name] = func
 
-        # 事件（名称冲突后者覆盖并给出警告）
-        for evt_name, evt_model in getattr(s2c_events, 'items', lambda: [])():
-            if evt_name in all_s2c_events and verbose:
-                print(f"⚠️  Duplicate S2C event '{evt_name}' found. Overriding previous definition.", file=sys.stderr)
-            if isinstance(evt_model, type) and issubclass(evt_model, BaseModel):
-                all_models.add(evt_model)
-                all_s2c_events[evt_name] = evt_model
+            # 事件（名称冲突后者覆盖并给出警告）
+            for evt_name, evt_model in getattr(s2c_events, 'items', lambda: [])():
+                if evt_name in all_s2c_events and verbose:
+                    print(f"⚠️  Duplicate S2C event '{evt_name}' found. Overriding previous definition.", file=sys.stderr)
+                if isinstance(evt_model, type) and issubclass(evt_model, BaseModel):
+                    all_models.add(evt_model)
+                    all_s2c_events[evt_name] = evt_model
+    finally:
+        # 恢复 sys.path
+        try:
+            sys.path.remove(project_root)
+        except ValueError:
+            pass  # defensive removal
 
     if verbose:
         print(f"📝 Found {len(all_models)} models to process")
@@ -540,6 +562,7 @@ def main():
         )
     except Exception as e:
         print(f"❌ {e}", file=sys.stderr)
+        traceback.print_exc()
         sys.exit(1)
 
 
