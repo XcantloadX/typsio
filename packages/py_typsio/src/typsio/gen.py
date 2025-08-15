@@ -486,41 +486,29 @@ def main():
             # 显式指定配置文件
             config_obj = _load_config_from_py(args.config)
         else:
-            # 检测是否完全未指定任何参数（包含位置参数与选项）
-            no_args_provided = (
-                (not args.input) and
-                args.registry_name is None and
-                args.output is None and
-                args.s2c_events_name is None and
-                args.verbose is False and
-                args.strict is False
-            )
-            if no_args_provided:
-                default_cfg = Path("./typsio.config.py").resolve()
-                if default_cfg.exists():
-                    config_obj = _load_config_from_py(default_cfg)
-                else:
-                    raise ValueError(
-                        "No arguments were provided and './typsio.config.py' was not found. "
-                        "Provide CLI args or a config file via --config/-c."
-                    )
+            # 否则，尝试加载默认配置文件
+            default_cfg = Path("./typsio.config.py").resolve()
+            if default_cfg.exists():
+                config_obj = _load_config_from_py(default_cfg)
 
+        # 如果没有加载配置文件，则创建一个空配置对象，以便后续用 CLI 参数填充
         if config_obj is None:
-            # 使用 CLI 传参路径（必须完整提供三要素）
-            if not (args.input and args.registry_name and args.output):
-                raise ValueError(
-                    "Incomplete CLI arguments. Provide '-i/--input', 'registry_name' and '--output', "
-                    "or use '--config/-c', or provide no args to use './typsio.config.py'."
-                )
-            # 构建配置对象
-            config_obj = TypsioGenConfig(
-                source_files=args.input,
-                registry_name=args.registry_name,
-                output=args.output,
-                s2c_events_name=args.s2c_events_name,
-                verbose=bool(args.verbose),
-                strict=bool(args.strict),
-            )
+            config_obj = TypsioGenConfig()
+
+        # 使用 CLI 提供的参数覆盖配置文件中的值
+        if args.registry_name:
+            config_obj.registry_name = args.registry_name
+        if args.input:
+            config_obj.source_files = args.input
+            config_obj.source_file = None  # 优先使用 source_files
+        if args.output:
+            config_obj.output = args.output
+        if args.s2c_events_name:
+            config_obj.s2c_events_name = args.s2c_events_name
+        if args.verbose:
+            config_obj.verbose = True
+        if args.strict:
+            config_obj.strict = True
 
         # 选择 source_files 优先，否则回退到单文件
         cfg_sources: Union[str, Path, List[Union[str, Path]]]
@@ -529,7 +517,18 @@ def main():
         elif config_obj.source_file:
             cfg_sources = config_obj.source_file
         else:
-            raise ValueError("TypsioGenConfig must include 'source_files' or 'source_file'.")
+            raise ValueError(
+                "Missing source file(s). Provide via --input or in config file "
+                "('source_files' or 'source_file')."
+            )
+
+        # 验证最终配置
+        if not config_obj.registry_name:
+            raise ValueError(
+                "Missing registry name. Provide as a positional argument or in config file."
+            )
+        if not config_obj.output:
+            raise ValueError("Missing output path. Provide via --output or in config file.")
 
         generate_types(
             source_file=cfg_sources,
