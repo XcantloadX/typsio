@@ -13,6 +13,12 @@ from pydantic import BaseModel
 from typing import Callable, Dict, Any, Type, Set, Union, Optional, List
 from dataclasses import dataclass
 
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal
+
+
 # --- 类型映射与生成逻辑 ---
 TYPE_MAP = {
     int: "number",
@@ -155,6 +161,8 @@ def get_ts_type(py_type: Any) -> str:
             return f"Record<{get_ts_type(args[0])}, {get_ts_type(args[1])}>"
         elif origin is set:
             return f"Set<{get_ts_type(args[0])}>"
+        elif origin is Literal:
+            return " | ".join(json.dumps(a) for a in args)
         # 处理 Union 类型 (包括 Optional)
         elif origin is Union and args:
             ts_types = [get_ts_type(t) for t in args]
