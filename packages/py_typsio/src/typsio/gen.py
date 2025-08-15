@@ -142,9 +142,6 @@ def get_ts_type(py_type: Any) -> str:
     # 基础类型
     if py_type in TYPE_MAP:
         return TYPE_MAP[py_type]
-    # Pydantic Model
-    if isinstance(py_type, type) and issubclass(py_type, BaseModel):
-        return py_type.__name__
     # 集合和联合类型
     if hasattr(py_type, "__origin__"):
         origin = py_type.__origin__
@@ -166,6 +163,9 @@ def get_ts_type(py_type: Any) -> str:
                 if t not in unique_ts_types:
                     unique_ts_types.append(t)
             return " | ".join(unique_ts_types)
+    # Pydantic Model
+    if isinstance(py_type, type) and issubclass(py_type, BaseModel):
+        return py_type.__name__
     # 处理 Python 3.10+ 的新联合类型语法 (X | Y)
     elif hasattr(py_type, '__args__') and '|' in str(py_type):
         args = py_type.__args__

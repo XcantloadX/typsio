@@ -20,6 +20,7 @@ class RPCRegistry:
         if hasattr(py_type, '__args__'):
             for arg in py_type.__args__:
                 self._add_model_from_type(arg)
+            return
         
         if isinstance(py_type, type) and issubclass(py_type, BaseModel):
             self.models.add(py_type)
