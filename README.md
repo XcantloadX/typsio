@@ -1,256 +1,87 @@
-# `typsio` - 类型安全的 Socket.IO RPC 框架
+# Typsio
+> [!WARNING]
+> This project is still under development and not ready for production use.
 
-[![PyPI version](https://badge.fury.io/py/typsio.svg)](https://badge.fury.io/py/typsio)
-[![npm version](https://badge.fury.io/js/typsio-client.svg)](https://badge.fury.io/js/typsio-client)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+Typsio is a RPC library designed to provide type safety and ease of use for your Python server(with Pydantic) and TypeScript client, especially for desktop applications based on Web technologies.
 
-**`typsio`** (Typed Socket.IO) 是一个轻量级、非侵入式的库，旨在为您的 `python-socketio` 和 `socket.io-client` 应用带来端到端的类型安全。它通过同步 Python 后端和 TypeScript 前端之间的函数签名和数据模型，使您能够创建健壮、可维护且不易出错的实时应用。
-
-告别猜测事件负载（payload）结构的时代。有了 `typsio`，您的代码编辑器将成为您抵御 Bug 的第一道防线。
-
-## ✨ 特性
-
-- **🚀 端到端类型安全**: 在 Python 中共享 Pydantic 模型，并自动生成相应的 TypeScript 接口。在编译时而不是运行时捕获数据类型不匹配的错误。
-- **✨ 声明式 API**: 使用简单的 `@rpc.register` 装饰器即可定义您的 RPC 方法，无需复杂的样板代码。
-- **🔄 双向通信**: 完全支持客户端调用的 RPC 和服务器推送的事件，两者都完全类型化。
-- **🧩 非侵入式设计**: `typsio` 与您现有的 `python-socketio` 服务器和 `socket.io-client` 实例集成，无需进行大规模重构。
-- **🛠️ 代码生成**: 一个简单而强大的命令行工具，可从您的 Python API 定义生成 TypeScript 类型。
-- **🔗 健壮的设计**: 使用注册表模式来定义 API，从根本上避免了大型 Python 应用中常见的循环导入问题。
-
-## 📦 安装
-
-### 后端 (Python)
-
-Python 包将发布到 PyPI。
-
+## Installation
+Python side:
 ```bash
-# 使用 pip 安装
+# Python 3.8+
 pip install typsio
-
-# 或者，在此 monorepo 中进行本地开发
-pip install -e packages/py_typsio
 ```
 
-### 前端 (TypeScript)
-
-客户端包将发布到 npm。
-
+TypeScript side:
 ```bash
-# 使用 npm 安装
 npm install typsio-client socket.io-client
-
-# 或者，在此 monorepo 中进行本地开发
-npm install file:packages/ts_typsio
+# And install json-schema-to-typescript for type generation
+npm install -g json-schema-to-typescript
 ```
 
-## 🚀 快速入门：运行示例
-
-通过运行附带的示例项目，在 5 分钟内体验 `typsio`。
-
-### 先决条件
-
-- Python 3.8+ 和虚拟环境工具 (如 `venv`)。
-- [uv](https://github.com/astral-sh/uv) (推荐用于运行脚本): `pip install uv`
-- Node.js 和 npm。
-- `json-schema-to-typescript`: `npm install -g json-schema-to-typescript`
-
-### 1. 启动后端服务器
-
-```bash
-# 进入后端示例目录
-cd examples/backend
-
-# 创建虚拟环境并安装依赖
-uv venv
-uv pip install -e . # pyproject.toml 已为本地开发配置
-
-# 运行开发服务器
-uv run dev
-```
-
-后端服务器现在运行在 `http://localhost:8000`。
-
-### 2. 启动前端客户端
-
-在新的终端中：
-
-```bash
-# 进入前端示例目录
-cd examples/frontend
-
-# 安装依赖 (这将链接到本地的 typsio-client 包)
-npm install
-
-# 运行开发服务器
-npm run dev
-```
-
-前端将在 `http://localhost:5173` (如果 5173 端口被占用，可能会是其他端口) 上可用。
-
-### 3. 查看实际效果！
-
-在浏览器中打开前端 URL。控制台将显示：
-1.  成功连接到服务器。
-2.  `get_user(1)` RPC 调用的结果。
-3.  `send_message` RPC 调用成功的确认信息。
-
-## 💻 开发工作流
-
-这是 `typsio` 项目的核心开发循环。
-
-### 1. 在 Python 中定义您的 API
-
-使用 Pydantic 定义数据模型，并在一个中心文件中注册您的 RPC 函数。该文件是您 API 形态的唯一真实来源。
-
-**`examples/backend/src/my_app/api_defs.py`**
+## Quickstart
+1. Define your business functions
 ```python
-from pydantic import BaseModel, Field
-from typsio import RPCRegistry
-import datetime
-
-# 1. 定义数据模型
+from pydantic import BaseModel
 class User(BaseModel):
     id: int
     name: str
 
-# 2. 创建 RPC 注册表
+def get_user(user_id: int) -> User | None:
+    # Complex database query
+    ...
+```
+
+2. Register your RPC methods
+```python
+from typsio import RPCRegistry
+from .models import User
 rpc_registry = RPCRegistry()
 
-# 3. 注册 RPC 函数
 @rpc_registry.register
-async def get_user(user_id: int) -> User | None:
-    # ... 实现逻辑 ...
-
-@rpc_registry.register
-def send_message(message: Message) -> bool:
-    # ... 实现逻辑 ...
-
-# 4. (可选) 定义服务器到客户端的事件
-class Notification(BaseModel):
-    message: str
-    timestamp: datetime.datetime
-
-SERVER_EVENTS = {
-    "newNotification": Notification
-}
+def get_user(user_id: int) -> User | None:
+    return get_user(user_id)
 ```
 
-### 2. 生成 TypeScript 类型
+3. Create config file `typsio.config.py` in your project root directory
+```python
+# Importing is optional. It's just to make your type checker happy.
+# If you like, you can use `if typing.TYPE_CHECKING: ...` pattern,
+# or just omit this import.
+from typsio.gen import TypsioGenConfig
 
-运行生成器，创建一个与您的 Python 定义相匹配的 TypeScript 文件。示例项目已将其配置为 `npm` 脚本。
+# Variable name must be `export`
+export = TypsioGenConfig(
+    source_file='./backend/rpc_methods.py', # Glob pattern also works
+    registry_name='rpc_registry', # Variable name of RPCRegistry instance
+    output='./frontend/api-types.ts',
+)
+```
 
+## Documentation
+WIP.
+
+## Contributing
+### Setup
+1. Fork & Clone
+
+2. Setup Python envioronment:
 ```bash
-# 在 examples/frontend/ 目录下
-npm run gen-types
+# cd typsio
+# with venv
+uv venv
+uv pip install -e packages/py_typsio
+# without venv
+python -m venv .venv
+pip install -e packages/py_typsio
 ```
 
-此命令执行 `examples/backend/pyproject.toml` 中定义的脚本：
-`python ../../../generator/typsio_gen.py src/my_app/api_defs.py ...`
-
-它会生成此文件：
-
-**`examples/frontend/src/generated/api-types.ts`**
-```typescript
-/* eslint-disable */
-/**
-* This file was automatically generated by typsio-gen.
-* DO NOT MODIFY IT BY HAND.
-*/
-
-export interface TypsioModels { /* ... */ }
-export interface User { /* ... */ }
-// ... 其他模型
-
-export interface RPCMethods {
-  get_user(user_id: number): Promise<User | null>;
-  send_message(message: Message): Promise<boolean>;
-}
-
-export interface ServerToClientEvents {
-  'newNotification': (payload: Notification) => void;
-}
+3. Setup Typescript environment:
+```bash
+cd packages/ts_typsio
+npm install
 ```
 
-### 3. 使用类型安全的客户端
-
-现在，您可以在前端代码中导入和使用客户端，并获得完全的类型安全和自动补全功能。
-
-**`examples/frontend/src/api.ts`**
-```typescript
-import { io } from 'socket.io-client';
-import { createTypsioClient } from 'typsio-client';
-// 导入生成的类型
-import type { RPCMethods, ServerToClientEvents } from './generated/api-types';
-
-const socket = io('http://localhost:8000');
-
-// 创建客户端，将生成的类型作为泛型传入
-const client = createTypsioClient<ServerToClientEvents, RPCMethods>(socket);
-
-export const api = client.remote; // 完全类型化的 RPC 方法
-export const on = client.on;       // 完全类型化的事件监听器
-```
-
-**`examples/frontend/src/main.ts`**
-```typescript
-import { api, on } from './api';
-
-// 自动补全知道 `get_user` 接受一个数字并返回 Promise<User | null>
-const user = await api.get_user(1);
-
-if (user) {
-  // 自动补全知道 `user` 的结构
-  console.log(user.name);
-
-  // 如果您尝试发送错误的结构，TypeScript 将会报错
-  await api.send_message({ text: '来自类型化客户端的消息!', user });
-}
-
-// `on` 监听器知道 `newNotification` 具有特定的负载类型
-on('newNotification', (payload) => {
-  console.log(payload.message);
-});
-```
-
-通过此工作流，您的 Python 后端和 TypeScript 前端将始终保持同步。
-
-## 🛠️ 开发 (Contributing)
-
-我们非常欢迎社区的贡献！如果您想改进 `typsio`，请遵循以下指南。
-
-### 项目结构
-
-本仓库是一个 monorepo，主要包含以下几个部分：
-
-- `packages/`: 包含 `py_typsio` (Python 核心库) 和 `ts_typsio` (TypeScript 客户端) 的源代码。
-- `generator/`: 包含从 Python 代码生成 TypeScript 类型的核心脚本。
-- `examples/`: 包含一个完整的示例项目，用于手动测试和演示。
-
-### 环境设置
-
-1.  **Fork & Clone**: 首先，Fork 本仓库，然后将您的 Fork 克隆到本地。
-
-2.  **后端 (`py_typsio`)**: 要对 Python 核心库进行更改，请设置以下环境：
-    ```bash
-    # cd typsio
-    # with venv
-    uv venv
-    uv pip install -e packages/py_typsio
-    # without venv
-    python -m venv .venv
-    pip install -e packages/py_typsio
-    ```
-
-3.  **前端 (`ts_typsio`)**: 要对 TypeScript 客户端进行更改：
-    ```bash
-    cd packages/ts_typsio
-    npm install
-    ```
-
-### 打包
-
-要发布新版本，使用 `scripts/` 目录中的发布脚本：
-
+### Packaging
 ```bash
 # For Linux/macOS
 ./scripts/publish.sh
@@ -258,27 +89,4 @@ on('newNotification', (payload) => {
 # For Windows
 ./scripts/publish.ps1
 ```
-
-确保在运行脚本之前更新两个包的版本号：
-- Python 包版本在 `packages/py_typsio/pyproject.toml` 中
-- TypeScript 包版本在 `packages/ts_typsio/package.json` 中
-
-详细说明请参见 [scripts/README.md](scripts/README.md)。
-
-### 运行测试
-
-在提交代码之前，请确保所有测试都已通过。
-
-- **Python**: `cd packages/py_typsio && pytest`
-- **TypeScript**: `cd packages/ts_typsio && npm test`
-
-*(注意: 测试脚本和依赖可能需要您根据需要进行配置)*
-
-### 提交贡献
-
-1.  从 `main` 分支创建一个新的特性分支 (`git checkout -b my-awesome-feature`)。
-2.  进行您的修改。
-3.  确保代码通过了测试和 lint 检查。
-4.  提交一个 Pull Request，清晰地描述您所做的更改和原因。
-
-感谢您的贡献！
+This will publish the package to PyPI and npm.
